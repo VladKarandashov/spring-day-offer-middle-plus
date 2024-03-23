@@ -11,34 +11,78 @@ import java.util.*;
 @Service
 public class TaskDistributorImpl implements TaskDistributor {
 
+    /**
+     * Примерная сложность алгоритма с учётом использования TreeMap:
+     * O(n * log(k)), где n - количество заданий, k - сотрудников
+     *
+     * @param employees список работников для которых нужно выделить задачи
+     * @param tasks список задач
+     */
     @Override
     public void distribute(List<EmployeeDTO> employees, List<TaskDTO> tasks) {
-        SortedMap<Integer, List<EmployeeDTO>> map = new TreeMap<>();
-        employees.forEach(emp -> {
-            map.putIfAbsent(0, new ArrayList<>());
-            map.get(0).add(emp);
+        
+        /*
+        * Map для работников: ключом являет время окончания предыдущей задачи каждого работника
+        * 
+        * То есть если по ключу 5 лежат Петя и Вася, то это значит что Петя и Вася закончили выполнять
+        * свои предыдущие задачи в 5 минут
+        * 
+        * TreeMap сортирует ключи по-возрастанию !!!!
+        */
+        SortedMap<Integer, List<EmployeeDTO>> employeeMap = new TreeMap<>();
+        
+        // заполняем Map всеми работниками по ключу 0 - так как до этого задач не было
+        employees.forEach(employee -> {
+            putValueToList(employeeMap, 0, employee);
         });
 
+        // сортируем с помощью компаратора (читать описание компаратора)
         tasks.sort(getComparator());
 
         tasks.forEach(task -> {
-            var startTime = map.firstKey();
+            // с помощью firstKey берём работника, который освободился раньше всех
+            var startTime = employeeMap.firstKey();
+            // высчитываем время, когда освободится работник если возьмёт эту задачу
             var endTime = startTime + task.getLeadTime();
             if (endTime > 7 * 60) {
+                // работник будет занят слишком долго
+                // всех других работников рассматривать нет смысла, так как они освободились также или позже - пропускаем
                 log.warn("Задача {} не будет взята в работу", task);
             } else {
-                var listEmp = map.get(startTime);
-                var emp = listEmp.remove(0);
-                if (listEmp.isEmpty()) {
-                    map.remove(startTime);
-                }
-                emp.getTasks().add(task);
-                map.putIfAbsent(endTime, new ArrayList<>());
-                map.get(endTime).add(emp);
+                // задача нам подходит - берём первого попавшего работника, закончившего в startTime (в дальнейшем можно предусмотреть приоритет работников)
+                var selectedEmployee = removeAnyValueByKey(employeeMap, startTime);
+                // выдаём задачу
+                selectedEmployee.getTasks().add(task);
+                // кладём сотрудника в Map по новому времени освобождения
+                putValueToList(employeeMap, endTime, selectedEmployee);
             }
         });
     }
 
+    /**
+     * Кладёт в map значение, с учётом того что нужен список
+     */
+    private void putValueToList(Map<Integer, List<EmployeeDTO>> map, Integer key, EmployeeDTO employee) {
+        map.putIfAbsent(key, new ArrayList<>());
+        map.get(key).add(employee);
+    }
+
+    private EmployeeDTO removeAnyValueByKey(SortedMap<Integer, List<EmployeeDTO>> employeeMap, Integer startTime) {
+        var listEmp = employeeMap.get(startTime);
+        var selectedEmployee = listEmp.remove(0);
+        // если после вытаскивания работника - в это время не заканчивал не один другой сотрудник - удаляем ключ из Map
+        if (listEmp.isEmpty()) {
+            employeeMap.remove(startTime);
+        }
+        return selectedEmployee;
+    }
+
+    /**
+     * Сортируем в первую очередь по приоритетам (сначала 1 потом 10)
+     * При равенстве приоритетов берём в первую очередь длинные задачи
+     *
+     * @return компаратор для сортировки
+     */
     private Comparator<TaskDTO> getComparator() {
         return (t1, t2) -> {
             var priority1 = t1.getPriority();
